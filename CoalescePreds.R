@@ -3,7 +3,7 @@
 clean_teams <- function(df){
   df <- df %>%
     mutate(
-      across(c(Home, Away, Proj_Winner),
+      across(c(Home, Away, Proj_Winner, ATS_Pick),
              ~case_when(
               . == 'UL-Monroe' ~ 'Louisiana-Monroe',
               . == 'USF' ~ 'South Florida',
@@ -13,12 +13,41 @@ clean_teams <- function(df){
               . == 'UL-Lafayette' ~ 'Louisiana',
               . == 'Massachusetts' ~ 'UMASS',
               . == 'Southern Miss' ~ 'Southern Mississippi',
+              . == 'UCONN' ~ 'Connecticut',
+              . %in% c('Miami FL', 'Miami-FL') ~ 'Miami Florida',
               TRUE ~ .
              )
             )
     )
   
   return(df)
+}
+flip_H_A <- function(df, true_home, true_away){
+  
+  
+  base <- df %>%
+    filter(Home != true_away & Away != true_home)
+  
+  fix_df <- df %>%
+    filter(Home == true_away & Away == true_home)
+  
+  true_away <- fix_df %>%
+    select(starts_with("Home")) %>%
+    rename_with(~ gsub("Home", "Away", .), everything())
+  
+  true_home <- fix_df %>%
+    select(starts_with("Away")) %>%
+    rename_with(~ gsub("Away", "Home", .), everything())
+  
+  true_rest <- fix_df %>%
+    select(-starts_with("Home"), -starts_with("Away"))
+  
+  final_df <- rbind(
+    cbind(true_away, true_home, true_rest) %>% select(names(base)),
+    base
+    )
+  
+  return(final_df)
 }
 ## GET
 # CFBInsidersScrape
@@ -133,7 +162,7 @@ get_bc <- function(){
   
   df <- df %>%
     filter(!is.na(Total) & !is.na(Raw_Spread)) %>%
-    separate(Game_Lab, into = c("Away", "Home"), sep = " at ")
+    separate(Game_Lab, into = c("Away", "Home"), sep = " at | vs\\. ")
   
   df <- clean_teams(df)
   
@@ -148,14 +177,15 @@ get_bc <- function(){
       # Spreads
       Fav_Spread = as.numeric(Fav_Spread),
       Home_Spread = if_else(Favorite == Home, Fav_Spread*-1, Fav_Spread),
-      Away_Spread = if_else(Favorite == Away, Fav_Spread*-1, Fav_Spread)
+      Away_Spread = if_else(Favorite == Away, Fav_Spread*-1, Fav_Spread),
+      Win_Prob = as.numeric(gsub("%", "", Win_Prob)) / 100
     ) %>%
     select(
       Week, Date, Time,
       Away, Away_Spread,
       Home, Home_Spread,
       Total,
-      Proj_Winner, Proj_Margin, Proj_Total,
+      Proj_Winner, Win_Prob, Proj_Margin, Proj_Total,
       Diff_Spread, Diff_Total,
       ATS_Pick, Total_Pick
     )
@@ -225,49 +255,129 @@ combine_pinny <- function(){
   return(final)
   
 }
-
-
-
-## EXE
-cfbi_df <- get_cfbi()
-bc_df_all <- get_bc()
-bc_df <- bc_df_all %>% filter(Week == 12)
-odds <- combine_pinny()
-
-# Join Current Week
-combine_preds <- function(bc_data = bc_df, cfbi_data = cfbi_df, show=20){
+pivot_slim_pinny <- function(w){
   
+  pinny_df <- read.csv("./Data/Pinnacle/Pinnacle_Base.csv") %>%
+    select(officialDate, Home, Away, ends_with("Price"), ends_with("Value")) %>%
+    pivot_longer(
+      cols = -c(officialDate, Home, Away),  # Keep ID columns
+      names_to = "Combined",
+      values_to = "Value"
+    ) %>%
+    separate(Combined, into = c("BetSide", "BetType", "Metric"), sep = "_") %>%
+    pivot_wider(
+      names_from = Metric,
+      values_from = Value
+    ) %>%
+    mutate(
+      amerOdds = dec_to_amer(Price),
+      impProb = ml_to_impprob(amerOdds),
+      week = w,
+      BetSide = if_else(BetSide == 'Home', Home, if_else(BetSide == 'Away', Away, BetSide))
+    ) %>%
+    mutate(
+      across(c(Home, Away, BetSide),
+             ~ case_when(
+               . == 'Miami Ohio' ~ 'Miami OH', 
+               . == 'Utsa' ~ 'UTSA',
+               . == 'Ucla' ~ 'UCLA',
+               . == 'Massachusetts' ~ 'UMASS',
+               . == 'Ul Monroe' ~ 'Louisiana-Monroe',
+               . == 'Florida International' ~ 'FIU',
+               . == 'Smu' ~ 'SMU',
+               . == 'Lsu' ~ 'LSU',
+               . == 'Usc' ~ 'USC',
+               . == 'Ul Lafayette' ~ 'Louisiana',
+               . == 'Southern Miss' ~ 'Southern Mississippi',
+               . == 'Texas Am' ~ 'Texas A&M',
+               . == 'Uab' ~ 'UAB',
+               . == 'Byu' ~ 'BYU',
+               . == 'Unlv' ~ 'UNLV',
+               TRUE ~ .
+             )
+      )
+    )
+}
+combine_slim_pinny <- function(){
+  pinny_df <- read.csv("./Data/Pinnacle/Pinnacle_Base.csv") %>%
+    select(officialDate, Home, Away, ends_with("Price"), ends_with("Value")) %>%
+    mutate(
+      across(ends_with('Price'), ~ dec_to_amer(.),.names = "{sub('_Price$', '_Odds', .col)}"),
+      across(ends_with('Odds'), ~ ml_to_impprob(.),.names = "{sub('_Odds$', '_Imp', .col)}"),
+      across(ends_with('Odds'), ~ round(., 0)),
+      across(c(Home, Away),
+             ~ case_when(
+               . == 'Miami Ohio' ~ 'Miami OH', 
+               . == 'Utsa' ~ 'UTSA',
+               . == 'Ucla' ~ 'UCLA',
+               . == 'Massachusetts' ~ 'UMASS',
+               . == 'Ul Monroe' ~ 'Louisiana-Monroe',
+               . == 'Florida International' ~ 'FIU',
+               . == 'Smu' ~ 'SMU',
+               . == 'Lsu' ~ 'LSU',
+               . == 'Usc' ~ 'USC',
+               . == 'Ul Lafayette' ~ 'Louisiana',
+               . == 'Southern Miss' ~ 'Southern Mississippi',
+               . == 'Texas Am' ~ 'Texas A&M',
+               . == 'Uab' ~ 'UAB',
+               . == 'Byu' ~ 'BYU',
+               . == 'Unlv' ~ 'UNLV',
+               TRUE ~ .
+             )
+      ),
+      Total = (Over_Total_Value + Under_Total_Value) / 2
+    ) %>%
+    rename(
+      Home_Spread = Home_Spread_Value,
+      Away_Spread = Away_Spread_Value
+    )
+  
+  return(pinny_df)
+  
+}
+
+## COmbine Predictions
+combine_preds <- function(bc_data = bc_df,
+                          cfbi_data = cfbi_df,
+                          odds_data = odds,
+                          show=20){
+  
+  # Join Everything
   df <- bc_df %>%
     full_join(cfbi_df, by=c('Home', 'Away')) %>%
     left_join(odds, by=c('Home', 'Away'))
   
-  print(df %>% filter(is.na(Home_Spread)))
   
+  # Error Check
   check_tms <- df %>% filter(is.na(Total.y) | is.na(Total.x)) %>% arrange(Home) %>% select(Home, Away)
-  
   if(nrow(check_tms) > 0){
     print("Null Join Values in DF: ")
     print(check_tms)
   }
+  # End Error Check
   
+  # Combine Prediction Sources
   df <- df %>%
     mutate(
+      # Single Source of Truth Columns
+      Date = Date.x,
+      Time = Time.x,
+      # Open From Connelly
       Open_Home_Spread = Home_Spread.y,
       Open_Away_Spread = Away_Spread.y,
+      # Coalesce Spreads if Not Live
       Home_Spread = coalesce(Home_Spread, Open_Home_Spread),
       Away_Spread = coalesce(Away_Spread, Open_Away_Spread),
       Total = coalesce(Total, Total.y)
     ) %>%
-    select(Week, Date.y, Time.y,
-           Away, Open_Away_Spread, Away_Spread,
-           Home, Open_Home_Spread, Home_Spread,
-           Proj_Winner.x, Proj_Margin.x, Proj_Winner.y, Proj_Margin.y,
+    select(Week, Date, Time,
+           Away, Open_Away_Spread, Away_Spread, Away_Moneyline_Odds, Away_Moneyline_Imp,
+           Home, Open_Home_Spread, Home_Spread, Home_Moneyline_Odds, Home_Moneyline_Imp,
+           Proj_Winner.x, Proj_Margin.x, Win_Prob, Proj_Winner.y, Proj_Margin.y,
            ATS_Pick.x, Diff_Spread.x, ATS_Pick.y, Diff_Spread.y,
            Total, Proj_Total.x, Diff_Total.x, Total_Pick.x, Proj_Total.y, Diff_Total.y, Total_Pick.y
-           ) %>%
+    ) %>%
     mutate(
-      Date = Date.y,
-      Time = Time.y,
       ## Money Lines
       Proj_Winner = if_else(Proj_Winner.x == Proj_Winner.y, Proj_Winner.y,
                             if_else(abs(Proj_Margin.x) > abs(Proj_Margin.y), Proj_Winner.x,
@@ -279,6 +389,9 @@ combine_preds <- function(bc_data = bc_df, cfbi_data = cfbi_df, show=20){
       Home_Spread_Diff = if_else(Home_Spread <= 0, Proj_Margin + Home_Spread, -1*Proj_Margin + Home_Spread),
       Away_Spread_Diff = if_else(Away_Spread <= 0, Proj_Margin + Away_Spread, -1*Proj_Margin + Away_Spread),
       ATS_Pick = if_else(Home_Spread_Diff > Away_Spread_Diff, Home, Away),
+      Moneyline_Bet_BC = if_else(Proj_Winner.x == Home,
+                                 paste0(Home, " (", Home_Moneyline_Odds,") Edge = ", round((Win_Prob - Home_Moneyline_Imp)*100, 1)),
+                                 paste0(Away, " (", Away_Moneyline_Odds,") Edge = ", round((Win_Prob - Away_Moneyline_Imp)*100, 1))),
       Spread_Diff = if_else(Home_Spread_Diff > Away_Spread_Diff, Home_Spread_Diff, Away_Spread_Diff),
       Spread_Diff_BC = abs(Diff_Spread.x),
       Spread_Diff_PF = abs(Diff_Spread.y),
@@ -294,21 +407,59 @@ combine_preds <- function(bc_data = bc_df, cfbi_data = cfbi_df, show=20){
   
   print(paste0("Top ",show," Best Spread Bets"))
   print(df  %>% select(Week, Date, Time, Home, Home_Spread, Away, Away_Spread, Proj_Winner, Proj_Margin, ATS_Pick, Spread_Diff, Spread_Diff_BC, Spread_Diff_PF)%>% arrange(desc(Spread_Diff)) %>% head(show))
-
+  
   print(paste0("Top ", show, " Best Total Bets"))
   print(df  %>% select(Week, Date, Time, Home, Away, Total, Proj_Total, Total_Pick, Total_Diff:Total_Diff_PF)%>% arrange(desc(Total_Diff)) %>% head(show))
   
   final <- df %>%
     select(
-      Week, Date, Time, Home, Home_Spread, Away, Away_Spread, Proj_Winner, Proj_Margin, ATS_Pick, Spread_Diff, Spread_Diff_BC, Spread_Diff_PF,
+      Week, Date, Time, Home, Home_Spread, Home_Moneyline_Odds, Away, Away_Spread, Away_Moneyline_Odds,
+      Proj_Winner, Proj_Margin, ATS_Pick, Moneyline_Bet_BC, Spread_Diff, Spread_Diff_BC, Spread_Diff_PF,
       Total, Proj_Total, Total_Pick, Total_Diff:Total_Diff_PF
     )
   
   return(final)
 }
-Week12Preds <- combine_preds()
-write_csv(Week12Preds, "Week12_AllPredictions.csv")
 
-write_csv(cfbi_df, "CFBI_Week12.csv")
+
+
+## EXE
+cfbi_df <- get_cfbi()
+bc_df_all <- get_bc()
+bc_df <- bc_df_all %>% filter(Week == 16)
+#odds <- bc_df %>% select(Home, Away, Away_Spread, Home_Spread, Total)
+#odds <- combine_pinny()
+odds <- combine_slim_pinny()
+
+# Flip Home And Away if Necessary (Match Pinny)
+
+cfbi_df <- reduce(
+  seq_along(odds$Home),
+  ~ flip_H_A(.x, odds$Home[.y], odds$Away[.y]),
+  .init = cfbi_df
+)
+
+bc_df <- reduce(
+  seq_along(odds$Home),
+  ~ flip_H_A(.x, odds$Home[.y], odds$Away[.y]),
+  .init = bc_df
+)
+
+# Join Current Week
+
+Week16Preds <- combine_preds()
+write_csv(Week16Preds, "Week16_AllPredictions.csv")
+write_csv(cfbi_df, "CFBI_Week16.csv")
+
+
+### Get Categories ###
+
+# Home Dogs w/ Spread_Diff > 3
+Week16Preds %>%
+  filter(ATS_Pick == Home & Home_Spread > 0 & Spread_Diff > 2)
+
+# Over Picks With a BC Difference > 5 and CFBI Difference < 4
+Week14Preds %>%
+  filter(Total_Pick == 'Over' & Total_Diff_BC > 4 & Total_Diff_PF <= 4)
 
 
