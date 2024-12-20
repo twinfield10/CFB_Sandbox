@@ -426,7 +426,7 @@ combine_preds <- function(bc_data = bc_df,
 ## EXE
 cfbi_df <- get_cfbi()
 bc_df_all <- get_bc()
-bc_df <- bc_df_all %>% filter(Week == 16)
+bc_df <- bc_df_all %>% filter(Week == 17)
 #odds <- bc_df %>% select(Home, Away, Away_Spread, Home_Spread, Total)
 #odds <- combine_pinny()
 odds <- combine_slim_pinny()
@@ -446,10 +446,29 @@ bc_df <- reduce(
 )
 
 # Join Current Week
+Week17Preds <- combine_preds()
+write_csv(Week17Preds, "Week17_AllPredictions.csv")
+write_csv(cfbi_df, "CFBI_Week17.csv")
 
-Week16Preds <- combine_preds()
-write_csv(Week16Preds, "Week16_AllPredictions.csv")
-write_csv(cfbi_df, "CFBI_Week16.csv")
+# Display Odds
+## Spreads
+Week17Preds %>%
+  select(Date, Time, Home, Home_Spread, Away, Away_Spread,
+         Proj_Winner, Proj_Margin, ATS_Pick, Spread_Diff,
+         Spread_Diff_BC, Spread_Diff_PF) %>%
+  arrange(desc(Spread_Diff)) %>%
+  head(20) %>%
+  gt() %>%
+  gt_theme_538()
+
+## Totals
+Week17Preds %>%
+  select(Date, Time, Home, Away,
+         Total, Proj_Total, Total_Pick,
+         Total_Diff:Total_Diff_PF) %>%
+  arrange(desc(Total_Diff)) %>%
+  head(20)
+  
 
 
 ### Get Categories ###

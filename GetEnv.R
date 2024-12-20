@@ -6,12 +6,13 @@ library(pacman)
 library(cfbfastR)
 library(tictoc)
 library(rvest)
-library(ggrepel)
-library(ggimage)
 library(aws.s3)
 library(zoo)
+# Display
 library(gt)
 library(gtExtras)
+library(ggrepel)
+library(ggimage)
 
 # Helper Functions
 `%notin%` <- Negate(`%in%`)
@@ -97,4 +98,16 @@ progressr::with_progress({
   gc()
 })
 print("PBP Load Time:")
+tictoc::toc()
+
+
+## Recruiting
+tictoc::tic()
+recruiting <- data.frame()
+progressr::with_progress({
+  recruiting <- pmap_dfr(list(year = c(2017:2023)), cfbd_recruiting_player)
+  print(paste0("Loaded Recruiting | Number of Rows: ",nrow(recruiting), " | Number of Columns: ", ncol(recruiting)))
+  gc()
+})
+print("Recruiting Load Time:")
 tictoc::toc()
